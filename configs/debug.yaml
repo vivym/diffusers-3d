@@ -1,0 +1,47 @@
+data:
+  class_path: diffusers_3d.data.datasets.ShapeNetCoreV2PC15KDataset
+  init_args:
+    root_path: data/ShapeNetCore.v2.PC15k
+    categories: ["car"]
+    num_points: 2048
+    train_batch_size: 16
+    val_batch_size: 16
+    num_workers: 4
+
+model:
+  class_path: diffusers_3d.models.PVCNN
+  init_args:
+    learning_rate: 0.0075
+    momentum: 0.9
+    weight_decay: 0.00002
+    norm_weight_decay: 0.0
+    label_smoothing: 0.1
+
+trainer:
+  max_epochs: 60
+  accelerator: "gpu"
+  devices: 1
+
+  # logger:
+  #   - class_path: diffusers_3d.utils.logger.WandbLogger
+  #     init_args:
+  #       project: diffusers-3d
+  #       entity: viv
+  #       name: debug
+  #       notes: "debug"
+  #       tags: ["debug"]
+  #       save_code: True
+
+  callbacks:
+    - class_path: diffusers_3d.utils.progress_bar.RichProgressBar
+    - class_path: ModelCheckpoint
+      init_args:
+        filename: "epoch_{epoch:03d}_acc_{val/acc:.02f}"
+        auto_insert_metric_name: False
+        save_top_k: -1
+        every_n_epochs: 5
+    - LearningRateMonitor
+
+  default_root_dir: wandb
+
+seed_everything: 23333
