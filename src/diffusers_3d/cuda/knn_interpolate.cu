@@ -36,21 +36,21 @@ void three_nn_thrust(
           const auto q_y = src_xyz_ptr[(batch_idx * num_src_points + k) * 3 + 1];
           const auto q_z = src_xyz_ptr[(batch_idx * num_src_points + k) * 3 + 2];
 
-          const auto d2 = (q_x - x) * (q_x - x) + (q_y - y) * (q_y - y) +
-                          (q_z - z) * (q_z - z);
+          const auto d = (q_x - x) * (q_x - x) + (q_y - y) * (q_y - y) +
+                         (q_z - z) * (q_z - z);
 
-          if (d2 < best_val2) {
-            best_val2 = d2;
+          if (d < best_val2) {
+            best_val2 = d;
             best_idx2 = k;
-            if (d2 < best_val1) {
+            if (d < best_val1) {
               best_val2 = best_val1;
               best_idx2 = best_idx1;
-              best_val1 = d2;
+              best_val1 = d;
               best_idx1 = k;
-              if (d2 < best_val0) {
+              if (d < best_val0) {
               best_val1 = best_val0;
               best_idx1 = best_idx0;
-              best_val0 = d2;
+              best_val0 = d;
               best_idx0 = k;
               }
             }
@@ -69,8 +69,8 @@ void three_nn_thrust(
         weights_ptr[i * 3 + 0] = d1d2 * d0d1d2;
         indices_ptr[i * 3 + 1] = best_idx1;
         weights_ptr[i * 3 + 1] = d0d2 * d0d1d2;
-        indices_ptr[i * 3 + 0] = best_idx2;
-        weights_ptr[i * 3 + 0] = d0d1 * d0d1d2;
+        indices_ptr[i * 3 + 2] = best_idx2;
+        weights_ptr[i * 3 + 2] = d0d1 * d0d1d2;
       });
 }
 
@@ -88,22 +88,22 @@ void three_nn_interpolate_thrust(
   thrust::for_each(
       policy,
       thrust::counting_iterator<index_t>(0),
-      thrust::counting_iterator<index_t>(batch_size * num_tgt_points * num_channels),
+      thrust::counting_iterator<index_t>(batch_size * num_channels * num_tgt_points),
       [=] __host__ __device__ (index_t i) {
-        const index_t batch_idx = i / (num_tgt_points * num_channels);
-        const index_t channel_idx = i % num_channels;
+        const index_t batch_idx = i / (num_channels * num_tgt_points);
+        const index_t point_idx = i % num_tgt_points;
 
-        const index_t j = i / num_channels;
-        const auto idx0 = indices_ptr[j * 3 + 0];
-        const auto idx1 = indices_ptr[j * 3 + 1];
-        const auto idx2 = indices_ptr[j * 3 + 2];
-        const auto weight0 = weights_ptr[j * 3 + 0];
-        const auto weight1 = weights_ptr[j * 3 + 1];
-        const auto weight2 = weights_ptr[j * 3 + 2];
+        const index_t index_offset = batch_idx * num_tgt_points + point_idx;
+        const auto idx0 = indices_ptr[index_offset * 3 + 0];
+        const auto idx1 = indices_ptr[index_offset * 3 + 1];
+        const auto idx2 = indices_ptr[index_offset * 3 + 2];
+        const auto weight0 = weights_ptr[index_offset * 3 + 0];
+        const auto weight1 = weights_ptr[index_offset * 3 + 1];
+        const auto weight2 = weights_ptr[index_offset * 3 + 2];
 
-        const auto offset_0 = (batch_idx * num_src_points + idx0) * num_channels + channel_idx;
-        const auto offset_1 = (batch_idx * num_src_points + idx1) * num_channels + channel_idx;
-        const auto offset_2 = (batch_idx * num_src_points + idx2) * num_channels + channel_idx;
+        const auto offset_0 = i / num_tgt_points * num_src_points + idx0;
+        const auto offset_1 = i / num_tgt_points * num_src_points + idx1;
+        const auto offset_2 = i / num_tgt_points * num_src_points + idx2;
 
         outputs_ptr[i] = src_features_ptr[offset_0] * weight0 +
                          src_features_ptr[offset_1] * weight1 +
@@ -125,7 +125,7 @@ void three_nn_interpolate_cuda_impl(
   auto batch_size = src_xyz.size(0);
   auto num_src_points = src_xyz.size(1);
   auto num_tgt_points = tgt_xyz.size(1);
-  auto num_channels = src_features.size(2);
+  auto num_channels = src_features.size(1);
 
   auto outputs_ptr = outputs.data_ptr<scalar_t>();
   auto indices_ptr = indices.data_ptr<index_t>();
@@ -152,9 +152,9 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor> three_nn_interpolate_cuda(
 
   auto batch_size = tgt_xyz.size(0);
   auto num_tgt_points = tgt_xyz.size(1);
-  auto num_channels = src_features.size(2);
+  auto num_channels = src_features.size(1);
 
-  auto outputs = at::empty({batch_size, num_tgt_points, num_channels}, src_features.options());
+  auto outputs = at::empty({batch_size, num_channels, num_tgt_points}, src_features.options());
   auto indices_options = src_features.options().dtype(at::ScalarType::Long);
   auto indices = at::empty({batch_size, num_tgt_points, 3}, indices_options);
   auto weights = at::empty({batch_size, num_tgt_points, 3}, src_features.options());
@@ -181,22 +181,22 @@ void three_nn_interpolate_backward_thrust(
   thrust::for_each(
       policy,
       thrust::counting_iterator<index_t>(0),
-      thrust::counting_iterator<index_t>(batch_size * num_tgt_points * num_channels),
+      thrust::counting_iterator<index_t>(batch_size * num_channels * num_tgt_points),
       [=] __host__ __device__ (index_t i) {
-        const index_t batch_idx = i / (num_tgt_points * num_channels);
-        const index_t channel_idx = i % num_channels;
+        const index_t batch_idx = i / (num_channels * num_tgt_points);
+        const index_t point_idx = i % num_tgt_points;
 
-        const index_t j = i / num_channels;
-        const auto idx0 = indices_ptr[j * 3 + 0];
-        const auto idx1 = indices_ptr[j * 3 + 1];
-        const auto idx2 = indices_ptr[j * 3 + 2];
-        const auto weight0 = weights_ptr[j * 3 + 0];
-        const auto weight1 = weights_ptr[j * 3 + 1];
-        const auto weight2 = weights_ptr[j * 3 + 2];
+        const index_t index_offset = batch_idx * num_tgt_points + point_idx;
+        const auto idx0 = indices_ptr[index_offset * 3 + 0];
+        const auto idx1 = indices_ptr[index_offset * 3 + 1];
+        const auto idx2 = indices_ptr[index_offset * 3 + 2];
+        const auto weight0 = weights_ptr[index_offset * 3 + 0];
+        const auto weight1 = weights_ptr[index_offset * 3 + 1];
+        const auto weight2 = weights_ptr[index_offset * 3 + 2];
 
-        const auto offset_0 = (batch_idx * num_src_points + idx0) * num_channels + channel_idx;
-        const auto offset_1 = (batch_idx * num_src_points + idx1) * num_channels + channel_idx;
-        const auto offset_2 = (batch_idx * num_src_points + idx2) * num_channels + channel_idx;
+        const auto offset_0 = i / num_tgt_points * num_src_points + idx0;
+        const auto offset_1 = i / num_tgt_points * num_src_points + idx1;
+        const auto offset_2 = i / num_tgt_points * num_src_points + idx2;
 
         atomicAdd(grad_inputs_ptr + offset_0, grad_outputs_ptr[i] * weight0);
         atomicAdd(grad_inputs_ptr + offset_1, grad_outputs_ptr[i] * weight1);
@@ -215,8 +215,8 @@ void three_nn_interpolate_backward_cuda_impl(
   auto policy = thrust::cuda::par(utils::ThrustAllocator()).on(stream);
 
   auto batch_size = grad_outputs.size(0);
-  auto num_tgt_points = grad_outputs.size(1);
-  auto num_channels = grad_outputs.size(2);
+  auto num_channels = grad_outputs.size(1);
+  auto num_tgt_points = grad_outputs.size(2);
 
   auto grad_inputs_ptr = grad_inputs.data_ptr<scalar_t>();
   auto grad_outputs_ptr = grad_outputs.data_ptr<scalar_t>();
@@ -238,11 +238,11 @@ at::Tensor three_nn_interpolate_backward_cuda(
   TORCH_CHECK(weights.is_cuda(), "weights must be a CUDA tensor");
 
   auto batch_size = grad_outputs.size(0);
-  auto num_tgt_points = grad_outputs.size(1);
-  auto num_channels = grad_outputs.size(2);
+  auto num_channels = grad_outputs.size(1);
+  auto num_tgt_points = grad_outputs.size(2);
 
   auto grad_inputs = at::zeros(
-      {batch_size, num_src_points, num_channels}, grad_outputs.options());
+      {batch_size, num_channels, num_src_points}, grad_outputs.options());
 
   AT_DISPATCH_FLOATING_TYPES(grad_outputs.type(), "three_nn_interpolate_backward_cuda", [&] {
     three_nn_interpolate_backward_cuda_impl<scalar_t, int64_t>(

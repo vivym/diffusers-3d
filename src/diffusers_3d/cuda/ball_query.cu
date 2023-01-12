@@ -34,9 +34,9 @@ void ball_query_cuda_impl_thrust(
 
         index_t cnt = 0;
         for (auto k = 0; k < num_points && cnt < max_samples_per_query; k++) {
-          const auto x = points_ptr[k * 3 + 0];
-          const auto y = points_ptr[k * 3 + 1];
-          const auto z = points_ptr[k * 3 + 2];
+          const auto x = points_ptr[batch_idx * num_points * 3 + k * 3 + 0];
+          const auto y = points_ptr[batch_idx * num_points * 3 + k * 3 + 1];
+          const auto z = points_ptr[batch_idx * num_points * 3 + k * 3 + 2];
           const auto d2 = (q_x - x) * (q_x - x) + (q_y - y) * (q_y - y) +
                           (q_z - z) * (q_z - z);
           if (d2 < radius2) {

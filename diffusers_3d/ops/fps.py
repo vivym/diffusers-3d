@@ -13,6 +13,14 @@ def main():
     idxs = furthest_point_sampling(points, 256)
     print(idxs.shape, idxs.min(), idxs.max())
 
+    coords, num_samples, indices = torch.load("../PVD/fps.pth", map_location="cuda")
+
+    coords = coords.permute(0, 2, 1)
+
+    res = furthest_point_sampling(coords, num_samples)
+
+    print((res == indices).all())
+
 
 if __name__ == "__main__":
     main()
