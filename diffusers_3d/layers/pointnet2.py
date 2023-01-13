@@ -108,6 +108,13 @@ class PointNetSAModuleMSG(nn.Module):
             self.mlps.append(SharedMLP(num_channels=mlp_spec, dim=2))
 
     def forward(self, x: PointTensor) -> PointTensor:
+        features, coords, temb = torch.load("../PVD/sa_outputs.pth", map_location="cuda")
+
+        print("diff", (features - x.features).abs().max())
+        print("+" * 20, torch.allclose(features, x.features, atol=1e-5, rtol=1e-5))
+
+        exit(0)
+
         features_list = []
         t_embed_list = []
 
@@ -162,20 +169,23 @@ class PointNetFPModule(nn.Module):
     def forward(self, points: PointTensor, ref_points: PointTensor) -> PointTensor:
         # TODO: optimize this
         features, *_ = three_nn_interpolate(
-            coords=points.coords,
-            ref_coords=ref_points.coords,
-            features=ref_points.features,
+            src_coords=points.coords,
+            src_features=points.features,
+            tgt_coords=ref_points.coords,
         )
         t_embed, *_ = three_nn_interpolate(
-            coords=points.coords,
-            ref_coords=ref_points.coords,
-            features=ref_points.t_embed,
+            src_coords=points.coords,
+            src_features=points.t_embed,
+            tgt_coords=ref_points.coords,
         )
 
-        if points.features is not None:
-            features = torch.cat([features, points.features], dim=1)
+        if ref_points.features is not None:
+            features = torch.cat([features, ref_points.features], dim=1)
+
+        features = self.mlp(features)
 
         x = points.clone()
+        x.coords = ref_points.coords
         x.features = features
         x.t_embed = t_embed
         return x

@@ -21,13 +21,36 @@ def get_voxel_coords(
         coords = (coords + 1) / 2.0
 
     coords = torch.clamp(coords * resolution, 0, resolution - 1)
-    coords = torch.round(coords).to(torch.int64)
+    coords_int = torch.round(coords).to(torch.int64)
 
-    idxs = coords[..., 0] * int(resolution ** 2) + \
-           coords[..., 1] * int(resolution ** 1) + \
-           coords[..., 2] * int(resolution ** 0)
+    idxs = coords_int[..., 0] * int(resolution ** 2) + \
+           coords_int[..., 1] * int(resolution ** 1) + \
+           coords_int[..., 2] * int(resolution ** 0)
 
     return coords, idxs
+
+
+def get_voxel_coords_(
+    coords: torch.Tensor, resolution: int, normalize: bool = True, eps: float = 0.
+):
+    coords = coords.detach()
+    coords = coords.double()
+    norm_coords = coords - coords.mean(2, keepdim=True)
+    if normalize:
+        norm_coords = norm_coords / (norm_coords.norm(p=2, dim=1, keepdim=True).max(dim=2, keepdim=True).values * 2.0 + eps) + 0.5
+    else:
+        norm_coords = (norm_coords + 1) / 2.0
+    norm_coords = torch.clamp(norm_coords * resolution, 0, resolution - 1)
+    vox_coords = torch.round(norm_coords).to(torch.int64)
+
+    norm_coords = norm_coords.float()
+
+    idxs = vox_coords[:, 0, :] * int(resolution ** 2) + \
+           vox_coords[:, 1, :] * int(resolution ** 1) + \
+           vox_coords[:, 2, :] * int(resolution ** 0)
+
+    return norm_coords, idxs
+
 
 class Voxelizer(nn.Module):
     def __init__(
@@ -43,6 +66,11 @@ class Voxelizer(nn.Module):
         self.eps = eps
 
     def forward(self, points: PointTensor):
+        # voxel_coords, voxel_coord_idxs = get_voxel_coords_(
+        #     points.coords.permute(0, 2, 1), self.resolution, self.normalize, self.eps
+        # )
+        # voxel_coords = voxel_coords.permute(0, 2, 1)
+
         voxel_coords, voxel_coord_idxs = get_voxel_coords(
             points.coords, self.resolution, self.normalize, self.eps
         )

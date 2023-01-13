@@ -148,7 +148,7 @@ class PVCNN(nn.Module):
             extra_channels = time_embed_dim if i > 0 else 0
             if pvconv_spec is not None:
                 pvconv_spec.in_channels = in_channels + extra_channels
-                pvconv_spec.use_attention = pvconv_spec.use_attention and i > 0
+                pvconv_spec.use_attention = pvconv_spec.use_attention and (i % 2 == 1)
 
                 sa_module_spec.in_channels = pvconv_spec.out_channels
             else:
@@ -173,7 +173,10 @@ class PVCNN(nn.Module):
 
             if pvconv_spec is not None:
                 pvconv_spec.in_channels = fp_module_spec.out_channels[-1]
-                pvconv_spec.use_attention = pvconv_spec.use_attention and i > 0
+                pvconv_spec.use_attention = \
+                    pvconv_spec.use_attention and (i % 2 == 1) and (i < len(up_block_specs) - 1)
+                # TODO:
+                pvconv_spec.use_attention = False
 
             self.up_blocks.append(
                 UpBlock(
@@ -204,9 +207,10 @@ class PVCNN(nn.Module):
         in_points_list: List[PointTensor] = []
         for i, down_block in enumerate(self.down_blocks):
             in_points_list.append(points.clone())
+            print("in_points_list", i, in_points_list[-1].features.mean())
             if i > 0:
                 points.features = torch.cat(
-                    [points.features, t_embed], dim=1
+                    [points.features, points.t_embed], dim=1
                 )
 
             points = down_block(points)
@@ -218,16 +222,22 @@ class PVCNN(nn.Module):
         points.features = self.global_attn(points.features)
 
         for i, up_block in enumerate(self.up_blocks):
-            points.features = torch.cat([points.features, t_embed], dim=1)
+            points.features = torch.cat([points.features, points.t_embed], dim=1)
             points = up_block(points, ref_points=in_points_list[-1 - i])
+            print("up points.features", points.features.mean())
 
-        return self.out_proj(points.features)
+        feats = torch.load("../PVD/AAA.pth", map_location="cuda")
+        print("!!!" * 8, torch.allclose(feats, points.features))
+        print("feats", feats.mean())
+        print("points.features", points.features.mean())
+
+        return self.out_proj(points.features), in_points_list
 
 
 def pvcnn_base(in_channels: int = 3, time_embed_dim: int = 64):
     down_block_specs = [
         (
-            PVConvSpec(out_channels=32, num_layers=2, voxel_resolution=32),
+            PVConvSpec(out_channels=32, num_layers=1, voxel_resolution=32),
             SAModuleSpec(
                 num_points=1024,
                 radius=0.1,
@@ -236,7 +246,7 @@ def pvcnn_base(in_channels: int = 3, time_embed_dim: int = 64):
             ),
         ),
         (
-            PVConvSpec(out_channels=64, num_layers=3, voxel_resolution=16),
+            PVConvSpec(out_channels=64, num_layers=1, voxel_resolution=16),
             SAModuleSpec(
                 num_points=256,
                 radius=0.2,
@@ -245,7 +255,7 @@ def pvcnn_base(in_channels: int = 3, time_embed_dim: int = 64):
             ),
         ),
         (
-            PVConvSpec(out_channels=128, num_layers=3, voxel_resolution=8),
+            PVConvSpec(out_channels=128, num_layers=1, voxel_resolution=8),
             SAModuleSpec(
                 num_points=64,
                 radius=0.4,
@@ -292,19 +302,91 @@ def pvcnn_base(in_channels: int = 3, time_embed_dim: int = 64):
 
 
 def main():
+    data_t, t = torch.load("../PVD/model_inputs.pth", map_location="cpu")
+
+    state_dict = torch.load("../PVD/model.pth", map_location="cpu")
+    # print("state_dict", list(state_dict.keys()))
+    new_state_dict = {}
+    for k, v in state_dict.items():
+        # print(k, v.shape)
+        if k.startswith("embedf"):
+            k = k.replace("embedf", "time_embed_proj")
+        elif k.startswith("classifier"):
+            k = k.replace("classifier", "out_proj")
+        elif k.startswith("global_att"):
+            k = k.replace("global_att", "global_attn")
+            k = k.replace("q.", "q_proj.")
+            k = k.replace("k.", "k_proj.")
+            k = k.replace("v.", "v_proj.")
+            k = k.replace("out.", "out_proj.")
+        elif k.startswith("sa_layers"):
+            k = k.replace("sa_layers", "down_blocks")
+            k = k.replace("point_features", "point_layers")
+            k = k.replace("q.", "q_proj.")
+            k = k.replace("k.", "k_proj.")
+            k = k.replace("v.", "v_proj.")
+            k = k.replace("out.", "out_proj.")
+            if not k.split(".")[2].isnumeric():
+                k = ".".join(k.split(".")[:2]) + f".0." + ".".join(k.split(".")[2:])
+        elif k.startswith("fp_layers"):
+            k = k.replace("fp_layers", "up_blocks")
+            k = k.replace("point_features", "point_layers")
+            k = k.replace("q.", "q_proj.")
+            k = k.replace("k.", "k_proj.")
+            k = k.replace("v.", "v_proj.")
+            k = k.replace("out.", "out_proj.")
+            # fp_layers.0.0.mlp.layers.0.weight -> up_blocks.0.fp_module.mlp.layers.0.weight
+            # fp_layers.0.1.voxel_layers.0.weight -> up_blocks.0.convs.0.voxel_layers.0.weight
+            layer_idx = int(k.split(".")[2])
+            if layer_idx == 0:
+                k = ".".join(k.split(".")[:2]) + f".fp_module." + ".".join(k.split(".")[3:])
+            else:
+                k = ".".join(k.split(".")[:2]) + f".convs.{layer_idx - 1}." + ".".join(k.split(".")[3:])
+
+        new_state_dict[k] = v
+
     device = torch.device("cuda")
 
     model = pvcnn_base(in_channels=3)
+    model.load_state_dict(new_state_dict, strict=True)
+
     print(model)
     model.to(device)
 
+    # data = torch.load("../PVD/inputs.pth", map_location="cpu")
+    # assert torch.allclose(data, data_t)
+
     points = PointTensor(
-        coords=torch.randn(10, 2048, 3).to(device),
-        features=torch.randn(10, 3, 2048).to(device),
+        coords=data_t.permute(0, 2, 1).to(device),
+        features=data_t.to(device),
         is_channel_last=False,
-        timesteps=torch.randint(0, 10, size=(10,)).to(device),
+        timesteps=t.to(device),
     )
-    model(points)
+
+    # from tqdm import tqdm
+    # for _ in tqdm(range(10000)):
+    #     model(points)
+
+    _, _, eps_recon = torch.load("../PVD/inputs_outputs.pth", map_location="cpu")
+
+    model.eval()
+
+    with torch.no_grad():
+        results, in_points_list = model(points)
+    # print("results", results.shape)
+    # print("results", results)
+    # print("eps_recon", eps_recon)
+
+    in_features_list, coords_list, features, coords, temb = torch.load("../PVD/sa_blocks_features.pth", map_location="cuda")
+    for in_features, in_points in zip(in_features_list, in_points_list):
+        print("PVD in_features", in_features.mean())
+        print("in_points", in_points.features.mean())
+        print(torch.allclose(in_features, in_points.features, atol=1e-3, rtol=1e-3))
+    print("temb", temb.mean())
+
+    # print("t_embed", t_embed)
+    # print("temb", temb)
+    # print("t_embed == temb", torch.allclose(t_embed.cpu(), temb, rtol=1e-4, atol=1e-4))
 
 
 if __name__ == "__main__":

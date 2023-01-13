@@ -16,24 +16,29 @@ def trilinear_devoxelize(
 
 
 def main():
-    coords, features, resolution, outs, inds, wgts = torch.load(
+    # coords, features, resolution, outs, inds, wgts = torch.load(
+    #     "../PVD/trilinear_devoxelize.pth", map_location="cuda"
+    # )
+    in_features, coords, resolution, out_features = torch.load(
         "../PVD/trilinear_devoxelize.pth", map_location="cuda"
     )
 
     coords = coords.permute(0, 2, 1)
 
-    features = features.view(*features.shape[:2], resolution, resolution, resolution)
+    # features = features.view(*features.shape[:2], resolution, resolution, resolution)
 
     point_features, indices, weights = trilinear_devoxelize(
-        coords, features, resolution
+        coords, in_features, resolution
     )
 
     indices = indices.permute(0, 2, 1)
     weights = weights.permute(0, 2, 1)
 
-    print((point_features == outs).all())
-    print((indices == inds).all())
-    print((wgts == weights).all())
+    # print((point_features == outs).all())
+    # print((indices == inds).all())
+    # print((wgts == weights).all())
+    print((point_features == out_features).all())
+    print("point_features", point_features.mean())
 
 
 if __name__ == "__main__":
