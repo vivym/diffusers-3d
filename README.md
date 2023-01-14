@@ -1,1 +1,1 @@
-# Fine Grained Playground
+# Diffusers-3D
