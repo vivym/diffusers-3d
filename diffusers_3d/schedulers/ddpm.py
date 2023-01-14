@@ -4,6 +4,7 @@ from typing import Optional, List
 
 import numpy as np
 import torch
+import torch.nn as nn
 
 from diffusers_3d.utils.outputs import BaseOutput
 
@@ -54,7 +55,7 @@ def betas_for_alpha_bar(num_diffusion_timesteps: int, max_beta: float = 0.999):
     return torch.as_tensor(betas, dtype=torch.float32)
 
 
-class DDPMScheduler:
+class DDPMScheduler(nn.Module):
     """
     Denoising diffusion probabilistic models (DDPMs) explores the connections between denoising score matching and
     Langevin dynamics sampling.
@@ -92,31 +93,33 @@ class DDPMScheduler:
         clip_sample: bool = True,
         prediction_type: str = "epsilon",
     ):
+        super().__init__()
+
         self.num_train_timesteps = num_train_timesteps
 
         if trained_betas is not None:
-            self.betas = torch.as_tensor(trained_betas, dtype=torch.float32)
+            betas = torch.as_tensor(trained_betas, dtype=torch.float32)
         elif beta_schedule == "linear":
-            self.betas = torch.linspace(
+            betas = torch.linspace(
                 beta_start, beta_end, num_train_timesteps, dtype=torch.float32
             )
         elif beta_schedule == "scaled_linear":
             # this schedule is very specific to the latent diffusion model.
-            self.betas = torch.linspace(
+            betas = torch.linspace(
                 beta_start ** 0.5, beta_end ** 0.5, num_train_timesteps, dtype=torch.float32
             ) ** 2
         elif beta_schedule == "squaredcos_cap_v2":
             # Glide cosine schedule
-            self.betas = betas_for_alpha_bar(num_train_timesteps)
+            betas = betas_for_alpha_bar(num_train_timesteps)
         elif beta_schedule == "sigmoid":
             # GeoDiff sigmoid schedule
             betas = torch.linspace(-6, 6, num_train_timesteps)
-            self.betas = torch.sigmoid(betas) * (beta_end - beta_start) + beta_start
+            betas = torch.sigmoid(betas) * (beta_end - beta_start) + beta_start
         else:
             raise NotImplementedError(f"{beta_schedule} does is not implemented for {self.__class__}")
 
-        self.alphas = 1.0 - self.betas
-        self.alphas_cumprod = torch.cumprod(self.alphas, dim=0)
+        alphas = 1.0 - betas
+        alphas_cumprod = torch.cumprod(alphas, dim=0)
         self.one = torch.tensor(1.0)
 
         # standard deviation of the initial noise distribution
@@ -129,6 +132,10 @@ class DDPMScheduler:
         self.variance_type = variance_type
         self.clip_sample = clip_sample
         self.prediction_type = prediction_type
+
+        self.register_buffer("betas", betas)
+        self.register_buffer("alphas", alphas)
+        self.register_buffer("alphas_cumprod", alphas_cumprod)
 
     def set_timesteps(self, num_inference_steps: int):
         """
@@ -256,3 +263,29 @@ class DDPMScheduler:
         pred_prev_sample = pred_prev_sample + variance
 
         return DDPMSchedulerOutput(prev_sample=pred_prev_sample, pred_original_sample=pred_original_sample)
+
+    def add_noise(
+        self,
+        original_samples: torch.FloatTensor,
+        noise: torch.FloatTensor,
+        timesteps: torch.IntTensor,
+    ) -> torch.FloatTensor:
+        # Make sure alphas_cumprod and timestep have same device and dtype as original_samples
+        self.alphas_cumprod = self.alphas_cumprod.to(device=original_samples.device, dtype=original_samples.dtype)
+        timesteps = timesteps.to(original_samples.device)
+
+        sqrt_alpha_prod = self.alphas_cumprod[timesteps] ** 0.5
+        sqrt_alpha_prod = sqrt_alpha_prod.flatten()
+        while len(sqrt_alpha_prod.shape) < len(original_samples.shape):
+            sqrt_alpha_prod = sqrt_alpha_prod.unsqueeze(-1)
+
+        sqrt_one_minus_alpha_prod = (1 - self.alphas_cumprod[timesteps]) ** 0.5
+        sqrt_one_minus_alpha_prod = sqrt_one_minus_alpha_prod.flatten()
+        while len(sqrt_one_minus_alpha_prod.shape) < len(original_samples.shape):
+            sqrt_one_minus_alpha_prod = sqrt_one_minus_alpha_prod.unsqueeze(-1)
+
+        noisy_samples = sqrt_alpha_prod * original_samples + sqrt_one_minus_alpha_prod * noise
+        return noisy_samples
+
+    def __len__(self):
+        return self.num_train_timesteps

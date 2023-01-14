@@ -108,13 +108,6 @@ class PointNetSAModuleMSG(nn.Module):
             self.mlps.append(SharedMLP(num_channels=mlp_spec, dim=2))
 
     def forward(self, x: PointTensor) -> PointTensor:
-        features, coords, temb = torch.load("../PVD/sa_outputs.pth", map_location="cuda")
-
-        print("diff", (features - x.features).abs().max())
-        print("+" * 20, torch.allclose(features, x.features, atol=1e-5, rtol=1e-5))
-
-        exit(0)
-
         features_list = []
         t_embed_list = []
 

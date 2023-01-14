@@ -35,7 +35,6 @@ class Attention(nn.Module):
             num_groups=num_groups, num_channels=num_channels
         )
         self.act_fn = nn.SiLU(inplace=True)
-        self.act_fn = Swish()
 
     def forward(self, x: torch.Tensor):
         q = self.q_proj(x).flatten(2)
@@ -50,11 +49,6 @@ class Attention(nn.Module):
         h = self.out_proj(h)
 
         return self.act_fn(self.norm(x + h))
-
-
-class Swish(nn.Module):
-    def forward(self,x):
-        return  x * torch.sigmoid(x)
 
 
 class PVConv(nn.Module):
@@ -88,8 +82,7 @@ class PVConv(nn.Module):
                 padding=kernel_size // 2,
             ),
             nn.GroupNorm(num_groups=8, num_channels=out_channels),
-            # nn.SiLU(inplace=True),
-            Swish(),
+            nn.SiLU(inplace=True),
         ]
 
         if dropout_prob > 0:
@@ -103,8 +96,7 @@ class PVConv(nn.Module):
                 padding=kernel_size // 2,
             ),
             nn.GroupNorm(num_groups=8, num_channels=out_channels),
-            # Attention(out_channels, 8) if use_attention else nn.SiLU(inplace=True),
-            Attention(out_channels, 8) if use_attention else Swish(),
+            Attention(out_channels, 8) if use_attention else nn.SiLU(inplace=True),
         ]
 
         if use_se:
@@ -116,64 +108,12 @@ class PVConv(nn.Module):
     def forward(self, points: PointTensor) -> PointTensor:
         voxels: PointTensor = self.voxelizer(points)
 
-        features, coords, voxel_features, voxel_coords = torch.load(
-            "../PVD/voxel.pth", map_location="cuda"
-        )
-        print("!" * 10, voxel_coords.dtype)
-        data = torch.load("../PVD/inputs.pth", map_location="cuda")
-        print("in_features", features.shape, torch.allclose(data, features), torch.allclose(data, points.features))
-        print("in_features", torch.allclose(features, points.features))
-        print("coords", torch.allclose(coords.permute(0, 2, 1), points.coords))
-        print("voxel_features", torch.allclose(voxel_features, voxels.features))
-        print("voxel_features diff", (voxel_features - voxels.features).abs().max())
-        print("voxel_coords", torch.allclose(voxel_coords.permute(0, 2, 1), voxels.coords))
-        diff = voxel_coords.permute(0, 2, 1) - voxels.coords
-        print("voxel_coords diff", diff.abs().max())
-
-        # voxel_features = self.voxel_layers(voxels.features)
-        tmp1 = voxel_features
-        voxel_features = self.voxel_layers(voxel_features)
+        voxel_features = self.voxel_layers(voxels.features)
         point_features = self.point_layers(points.features)
-
-        tmp = self.voxel_layers(voxels.features)
-
-        print("@@@@", (tmp - voxel_features).abs().max(), (tmp1 - voxels.features).abs().max())
-
-        pvd_point_features = torch.load(
-            "../PVD/point_features.pth", map_location="cuda"
-        )
-        print("point_features", torch.allclose(pvd_point_features, point_features))
-
-        # print("voxels.features", voxels.features.mean())
-        # print("voxel_features", voxel_features.mean())
-        # print("point_features", point_features.mean())
-
-        in_features, coords, resolution, out_features = torch.load(
-            "../PVD/trilinear_devoxelize.pth", map_location="cuda"
-        )
-        print("in_features", torch.allclose(in_features, voxel_features))
-        print("coords", torch.allclose(coords.permute(0, 2, 1), voxels.coords))
-        print("resolution", resolution, self.voxel_resolution)
-
-        # voxel_features, *_ = trilinear_devoxelize(
-        #     voxels.coords, voxel_features, self.voxel_resolution
-        # )
-
-        print("coords diff", (coords.permute(0, 2, 1) - voxels.coords).abs().max())
-        print("in_features diff", (voxel_features - in_features).abs().max())
 
         voxel_features, *_ = trilinear_devoxelize(
             voxels.coords, voxel_features, self.voxel_resolution
         )
-
-        print("out_features diff", (voxel_features - out_features).abs().max())
-
-        print((out_features == voxel_features).all())
-        print("out_features", torch.allclose(out_features, voxel_features))
-
-        # print("trilinear_devoxelize voxel_features", voxel_features.mean())
-
-        # exit(0)
 
         x = points.clone()
         x.coords = points.coords

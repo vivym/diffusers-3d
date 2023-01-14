@@ -89,9 +89,9 @@ class DatasetImpl(Dataset):
         pc_std = self.stats_infos[synset_id]["std"]
         pc_std_all = self.stats_infos[synset_id]["std_all"]
 
-        pc_mean = np.asarray(pc_mean).reshape(1, -1)
-        pc_std = np.asarray(pc_std).reshape(1, -1)
-        pc_std_all = np.asarray(pc_std_all).reshape(1, -1)
+        pc_mean = np.asarray(pc_mean, dtype=np.float32).reshape(1, -1)
+        pc_std = np.asarray(pc_std, dtype=np.float32).reshape(1, -1)
+        pc_std_all = np.asarray(pc_std_all, dtype=np.float32).reshape(1, -1)
 
         pc = np.load(self.root_path / meta_info["pc_path"]).astype(np.float32)
 
@@ -155,7 +155,7 @@ class ShapeNetCoreV2PC15KDataset(pl.LightningDataModule):
 
             for split in splits:
                 for pc_path in (synset_id_path / split).glob("*.npy"):
-                    pc = np.load(pc_path)
+                    pc = np.load(pc_path).astype(np.float32)
                     assert pc.shape[0] == 15000
                     pcs.append(pc)
 

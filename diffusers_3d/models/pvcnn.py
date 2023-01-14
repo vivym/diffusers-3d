@@ -175,8 +175,6 @@ class PVCNN(nn.Module):
                 pvconv_spec.in_channels = fp_module_spec.out_channels[-1]
                 pvconv_spec.use_attention = \
                     pvconv_spec.use_attention and (i % 2 == 1) and (i < len(up_block_specs) - 1)
-                # TODO:
-                pvconv_spec.use_attention = False
 
             self.up_blocks.append(
                 UpBlock(
@@ -199,7 +197,7 @@ class PVCNN(nn.Module):
     def forward(self, points: PointTensor):
         assert not points.is_channel_last
 
-        t_embed = self.time_embedding(points.timesteps)
+        t_embed = self.time_embedding(points.timesteps).to(points.features.dtype)
         t_embed = self.time_embed_proj(t_embed)
         t_embed = t_embed[:, :, None].expand(*t_embed.shape, points.coords.shape[1])
         points.t_embed = t_embed
@@ -207,7 +205,6 @@ class PVCNN(nn.Module):
         in_points_list: List[PointTensor] = []
         for i, down_block in enumerate(self.down_blocks):
             in_points_list.append(points.clone())
-            print("in_points_list", i, in_points_list[-1].features.mean())
             if i > 0:
                 points.features = torch.cat(
                     [points.features, points.t_embed], dim=1
@@ -224,20 +221,14 @@ class PVCNN(nn.Module):
         for i, up_block in enumerate(self.up_blocks):
             points.features = torch.cat([points.features, points.t_embed], dim=1)
             points = up_block(points, ref_points=in_points_list[-1 - i])
-            print("up points.features", points.features.mean())
 
-        feats = torch.load("../PVD/AAA.pth", map_location="cuda")
-        print("!!!" * 8, torch.allclose(feats, points.features))
-        print("feats", feats.mean())
-        print("points.features", points.features.mean())
-
-        return self.out_proj(points.features), in_points_list
+        return self.out_proj(points.features)
 
 
 def pvcnn_base(in_channels: int = 3, time_embed_dim: int = 64):
     down_block_specs = [
         (
-            PVConvSpec(out_channels=32, num_layers=1, voxel_resolution=32),
+            PVConvSpec(out_channels=32, num_layers=2, voxel_resolution=32),
             SAModuleSpec(
                 num_points=1024,
                 radius=0.1,
@@ -246,7 +237,7 @@ def pvcnn_base(in_channels: int = 3, time_embed_dim: int = 64):
             ),
         ),
         (
-            PVConvSpec(out_channels=64, num_layers=1, voxel_resolution=16),
+            PVConvSpec(out_channels=64, num_layers=3, voxel_resolution=16),
             SAModuleSpec(
                 num_points=256,
                 radius=0.2,
@@ -255,7 +246,7 @@ def pvcnn_base(in_channels: int = 3, time_embed_dim: int = 64):
             ),
         ),
         (
-            PVConvSpec(out_channels=128, num_layers=1, voxel_resolution=8),
+            PVConvSpec(out_channels=128, num_layers=3, voxel_resolution=8),
             SAModuleSpec(
                 num_points=64,
                 radius=0.4,
