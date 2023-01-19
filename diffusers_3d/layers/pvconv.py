@@ -3,14 +3,14 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from diffusers_3d.structures.points import PointTensor
-# from diffusers_3d.ops.trilinear_devoxelize import trilinear_devoxelize
+from diffusers_3d.ops.trilinear_devoxelize import trilinear_devoxelize
 
 from .voxelization import Voxelizer
 from .se import SE3D
 from .shared_mlp import SharedMLP
 
-from .modules.voxelization import Voxelization
-from .modules.functional.devoxelization import trilinear_devoxelize
+# from .modules.voxelization import Voxelization
+# from .modules.functional.devoxelization import trilinear_devoxelize
 
 tmp_index = 0
 tmp_index2 = 0
@@ -138,20 +138,20 @@ class PVConv(nn.Module):
         #     features=voxel_features,
         # )
 
-        voxel_features = self.voxel_layers[0](voxels.features)
+        voxel_features = self.voxel_layers(voxels.features)
         point_features = self.point_layers(points.features)
 
         # print("weight", self.voxel_layers[0].weight.abs().max())
         # print("bias", self.voxel_layers[0].bias.abs().max())
 
-        # voxel_features, *_ = trilinear_devoxelize(
-        #     voxels.coords, voxel_features, self.voxel_resolution
-        # )
         tmp = voxel_features.clone()
-        voxel_features = trilinear_devoxelize(
-            voxel_features, voxels.coords.permute(0, 2, 1),
-            self.voxel_resolution, self.training
+        voxel_features, *_ = trilinear_devoxelize(
+            voxels.coords, voxel_features, self.voxel_resolution
         )
+        # voxel_features = trilinear_devoxelize(
+        #     voxel_features, voxels.coords.permute(0, 2, 1),
+        #     self.voxel_resolution, self.training
+        # )
         # print("voxel_features", voxel_features.shape)
 
         global tmp_index2
