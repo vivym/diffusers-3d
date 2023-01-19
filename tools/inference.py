@@ -8,7 +8,7 @@ def main():
     device = torch.device("cuda")
 
     model = PVCNN.load_from_checkpoint(
-        "wandb/lightning_logs/version_19/checkpoints/epoch_049_acc_0.00.ckpt"
+        "wandb/lightning_logs/version_20/checkpoints/epoch_000099.ckpt"
     )
     model.eval()
     model.to(device)

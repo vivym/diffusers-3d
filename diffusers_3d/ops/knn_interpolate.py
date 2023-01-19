@@ -17,14 +17,21 @@ def three_nn_interpolate(
 
 
 def main():
-    points_coords, centers_coords, centers_features, points_features, indices, weights = torch.load(
-        "../PVD/three_nn_interpolate.pth", map_location="cuda"
+    (
+        points_coords, centers_coords, centers_features, points_features, temb, features, t_embed,
+        interpolated_features, interpolated_temb,
+    ) = torch.load(
+        "../PVD/PVD/three_nn_interpolate.pth", map_location="cpu"
     )
 
-    points_coords = points_coords.permute(0, 2, 1)
-    centers_coords = centers_coords.permute(0, 2, 1)
-    indices = indices.permute(0, 2, 1)
-    weights = weights.permute(0, 2, 1)
+    print("features", torch.allclose(interpolated_features, features))
+    print("t_embed", torch.allclose(interpolated_temb, t_embed))
+    return
+
+    # points_coords = points_coords.permute(0, 2, 1)
+    # centers_coords = centers_coords.permute(0, 2, 1)
+    # indices = indices.permute(0, 2, 1)
+    # weights = weights.permute(0, 2, 1)
 
     res = three_nn_interpolate(centers_coords, centers_features, points_coords)
 

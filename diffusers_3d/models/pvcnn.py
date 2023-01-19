@@ -202,6 +202,9 @@ class PVCNN(nn.Module):
         t_embed = t_embed[:, :, None].expand(*t_embed.shape, points.coords.shape[1])
         points.t_embed = t_embed
 
+        tmp = torch.load("../PVD/PVD/t_embed.pth")
+        print("t_embed", torch.allclose(tmp, t_embed))
+
         in_points_list: List[PointTensor] = []
         for i, down_block in enumerate(self.down_blocks):
             in_points_list.append(points.clone())
@@ -211,6 +214,13 @@ class PVCNN(nn.Module):
                 )
 
             points = down_block(points)
+            tmp = torch.load(f"../PVD/PVD/sa_blocks{i}.pth")
+            print(f"sa_blocks{i}", torch.allclose(tmp, points.features), (tmp - points.features).abs().max())
+
+        # print("sa_blocks", points.features.mean(), points.features[0, :, 0])
+        tmp = torch.load("../PVD/PVD/sa_blocks.pth")
+        print("sa_blocks", torch.allclose(tmp, points.features))
+        # print("sa_blocks", torch.allclose(tmp[1, :, 1], points.features[1, :, 1]))
 
         # only use extra features in the last fp module
         in_points_list[0].features = in_points_list[0].features[:, 3:, :]
@@ -221,6 +231,8 @@ class PVCNN(nn.Module):
         for i, up_block in enumerate(self.up_blocks):
             points.features = torch.cat([points.features, points.t_embed], dim=1)
             points = up_block(points, ref_points=in_points_list[-1 - i])
+            tmp = torch.load(f"../PVD/PVD/fp_blocks{i}.pth")
+            print(f"fp_blocks{i}", torch.allclose(tmp, points.features), (tmp - points.features).abs().max())
 
         return self.out_proj(points.features)
 
@@ -281,6 +293,73 @@ def pvcnn_base(in_channels: int = 3, time_embed_dim: int = 64):
         (
             FPModuleSpec(out_channels=[128, 128, 64]),
             PVConvSpec(out_channels=64, num_layers=2, voxel_resolution=32),
+        ),
+    ]
+
+    return PVCNN(
+        in_channels=in_channels,
+        time_embed_dim=time_embed_dim,
+        down_block_specs=down_block_specs,
+        up_block_specs=up_block_specs,
+    )
+
+
+def pvcnn_debug(in_channels: int = 3, time_embed_dim: int = 64):
+    down_block_specs = [
+        (
+            PVConvSpec(out_channels=32, num_layers=2, voxel_resolution=32),
+            SAModuleSpec(
+                num_points=1024,
+                radius=0.1,
+                max_samples_per_query=32,
+                out_channels=[32, 64],
+            ),
+        ),
+        (
+            PVConvSpec(out_channels=64, num_layers=1, voxel_resolution=16),
+            SAModuleSpec(
+                num_points=256,
+                radius=0.2,
+                max_samples_per_query=32,
+                out_channels=[64, 128],
+            ),
+        ),
+        (
+            PVConvSpec(out_channels=128, num_layers=1, voxel_resolution=8),
+            SAModuleSpec(
+                num_points=64,
+                radius=0.4,
+                max_samples_per_query=32,
+                out_channels=[128, 256],
+            ),
+        ),
+        (
+            None,
+            SAModuleSpec(
+                num_points=16,
+                radius=0.8,
+                max_samples_per_query=32,
+                out_channels=[256, 256, 512],
+            ),
+        ),
+    ]
+
+    up_block_specs = [
+        (
+            FPModuleSpec(out_channels=[256, 256]),
+            PVConvSpec(out_channels=256, num_layers=3, voxel_resolution=8, use_attention=False),
+        ),
+        (
+            FPModuleSpec(out_channels=[256, 256]),
+            PVConvSpec(out_channels=256, num_layers=3, voxel_resolution=8, use_attention=False),
+        ),
+        (
+            FPModuleSpec(out_channels=[256, 128]),
+            PVConvSpec(out_channels=128, num_layers=2, voxel_resolution=16, use_attention=False),
+        ),
+        (
+            FPModuleSpec(out_channels=[128, 128, 64]),
+            PVConvSpec(out_channels=64, num_layers=2, voxel_resolution=32, use_attention=False),
         ),
     ]
 

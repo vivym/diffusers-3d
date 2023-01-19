@@ -36,7 +36,7 @@ trainer:
     - class_path: diffusers_3d.utils.progress_bar.RichProgressBar
     - class_path: ModelCheckpoint
       init_args:
-        filename: "epoch_{epoch:03d}_acc_{val/acc:.02f}"
+        filename: "epoch_{epoch:06d}"
         auto_insert_metric_name: False
         save_top_k: -1
         every_n_epochs: 10

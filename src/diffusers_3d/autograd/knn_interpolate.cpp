@@ -36,7 +36,7 @@ public:
     auto grad_inputs = three_nn_interpolate_backward(
         grad_output, indices, weights, num_src_points);
 
-    return {grad_inputs, at::Tensor(), at::Tensor()};
+    return {at::Tensor(), grad_inputs, at::Tensor()};
   }
 };
 

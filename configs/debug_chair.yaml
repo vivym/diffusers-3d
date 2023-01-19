@@ -4,8 +4,8 @@ data:
     root_path: data/ShapeNetCore.v2.PC15k
     categories: ["chair"]
     num_points: 2048
-    train_batch_size: 16
-    val_batch_size: 16
+    train_batch_size: 32
+    val_batch_size: 32
     num_workers: 8
 
 model:
@@ -35,7 +35,7 @@ trainer:
     - class_path: diffusers_3d.utils.progress_bar.RichProgressBar
     - class_path: ModelCheckpoint
       init_args:
-        filename: "epoch_{epoch:03d}_acc_{val/acc:.02f}"
+        filename: "epoch_{epoch:06d}"
         auto_insert_metric_name: False
         save_top_k: -1
         every_n_epochs: 10

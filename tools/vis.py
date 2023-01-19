@@ -34,6 +34,9 @@ def visualize_pointcloud_batch(path, pointclouds, pred_labels, labels, categorie
 def main():
     pcs = torch.load("generated.pth", map_location="cpu")
 
+    if pcs.shape[1] == 3:
+        pcs = pcs.permute(0, 2, 1)
+
     visualize_pointcloud_batch(
         "generated.png", pcs, None, None, None
     )

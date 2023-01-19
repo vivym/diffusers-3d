@@ -55,6 +55,7 @@ class PVCNN(pl.LightningModule):
             num_train_timesteps=1000,
             beta_schedule="linear",
             prediction_type="epsilon",
+            clip_sample=False,
         )
 
         import numpy as np

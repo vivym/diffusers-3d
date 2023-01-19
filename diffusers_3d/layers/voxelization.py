@@ -6,7 +6,7 @@ from diffusers_3d.structures.points import PointTensor
 
 
 @torch.no_grad()
-@torch.jit.script
+# @torch.jit.script
 def get_voxel_coords(
     coords: torch.Tensor, resolution: int, normalize: bool = True, eps: float = 0.
 ):

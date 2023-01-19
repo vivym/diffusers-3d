@@ -36,7 +36,7 @@ public:
     auto grad_inputs = trilinear_devoxelize_backward(
         grad_output, indices, weights, voxel_resolution);
 
-    return {grad_inputs, at::Tensor(), at::Tensor()};
+    return {at::Tensor(), grad_inputs, at::Tensor()};
   }
 };
 

@@ -39,12 +39,16 @@ category_to_synset_id = {v: k for k, v in synset_id_to_category.items()}
 class DataItem:
     pcs: torch.Tensor
     labels: torch.Tensor
+    mean: torch.Tensor
+    std: torch.Tensor
 
 
 def collate_fn(batch: List[DataItem]) -> DataItem:
     return DataItem(
         pcs=torch.stack([data.pcs for data in batch], dim=0),
         labels=torch.as_tensor([data.labels for data in batch], dtype=torch.int64),
+        mean=torch.stack([data.mean for data in batch], dim=0),
+        std=torch.stack([data.std for data in batch], dim=0),
     )
 
 
@@ -101,7 +105,15 @@ class DatasetImpl(Dataset):
         pc = (pc[sampled_idxs] - pc_mean) / pc_std_all
         pc = torch.from_numpy(pc)
 
-        return DataItem(pcs=pc, labels=label)
+        pc_mean = torch.from_numpy(pc_mean.reshape(-1))
+        pc_std_all = torch.from_numpy(pc_std_all.reshape(-1))
+
+        return DataItem(
+            pcs=pc,
+            labels=label,
+            mean=pc_mean,
+            std=pc_std_all,
+        )
 
 
 class ShapeNetCoreV2PC15KDataset(pl.LightningDataModule):
