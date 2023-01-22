@@ -10,26 +10,18 @@ from diffusers_3d.structures.points import PointTensor
 def main():
     device = torch.device("cuda")
 
-    model = PVCNN()
-    model.model = pvcnn_debug()
-    # print(model)
-
-    state_dict = torch.load("../PVD/PVD/output/train_generation_pl_no_noise_init/2023-01-15-18-10-08/epoch_99.pth", map_location="cpu")
-    print("state_dict", list(state_dict.keys()))
-    new_state_dict = {}
-    for k, v in state_dict["model_state"].items():
-        k = k[len("model.module."):]
-        new_state_dict[k] = v
-
-    model.model.load_state_dict(new_state_dict)
+    model = PVCNN.load_from_checkpoint(
+        "wandb/lightning_logs/version_36/checkpoints/epoch_000099.ckpt",
+        map_location="cpu",
+    )
 
     model.model.eval()
     model.to(device)
 
-    sample_shape = (16, 2048, 3)
+    sample_shape = (25, 2048, 3)
 
     sample = torch.randn(sample_shape, device=device)
-    sample = torch.load("../PVD/PVD/tmp/noise.pth").permute(0, 2, 1)
+    # sample = torch.load("../PVD/PVD/tmp/noise.pth").permute(0, 2, 1)
 
     # set step values
     model.noise_scheduler.set_timesteps(1000)

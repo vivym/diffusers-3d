@@ -4,8 +4,8 @@ data:
     root_path: data/ShapeNetCore.v2.PC15k
     categories: ["chair"]
     num_points: 2048
-    train_batch_size: 32
-    val_batch_size: 32
+    train_batch_size: 16
+    val_batch_size: 16
     num_workers: 8
 
 model:
@@ -13,7 +13,7 @@ model:
   init_args:
     learning_rate: 0.0002
     momentum: 0.9
-    weight_decay: 0.00002
+    weight_decay: 0.
     norm_weight_decay: 0.0
 
 trainer:

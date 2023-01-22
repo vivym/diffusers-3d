@@ -234,8 +234,6 @@ class DDPMScheduler(nn.Module):
         if self.clip_sample:
             pred_original_sample = torch.clamp(pred_original_sample, -1, 1)
 
-        print("pred_original_sample", pred_original_sample.shape, pred_original_sample.mean())
-
         # 4. Compute coefficients for pred_original_sample x_0 and current sample x_t
         # See formula (7) from https://arxiv.org/pdf/2006.11239.pdf
         pred_original_sample_coeff = (alpha_prod_t_prev ** (0.5) * self.betas[t]) / beta_prod_t
@@ -258,17 +256,12 @@ class DDPMScheduler(nn.Module):
                     model_output.shape, generator=generator, device=device, dtype=model_output.dtype
                 )
 
-            variance_noise = torch.load("../PVD/PVD/variance_noise.pth").permute(0, 2, 1)
             if self.variance_type == "fixed_small_log":
                 variance = self._get_variance(t, predicted_variance=predicted_variance) * variance_noise
             else:
                 variance = (self._get_variance(t, predicted_variance=predicted_variance) ** 0.5) * variance_noise
 
-        print("model_mean", pred_prev_sample.shape, pred_prev_sample.mean())
-
         pred_prev_sample = pred_prev_sample + variance
-
-        print("pred_prev_sample", pred_prev_sample.shape, pred_prev_sample.mean())
 
         return DDPMSchedulerOutput(prev_sample=pred_prev_sample, pred_original_sample=pred_original_sample)
 

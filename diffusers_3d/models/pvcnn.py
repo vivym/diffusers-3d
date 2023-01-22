@@ -202,9 +202,6 @@ class PVCNN(nn.Module):
         t_embed = t_embed[:, :, None].expand(*t_embed.shape, points.coords.shape[1])
         points.t_embed = t_embed
 
-        tmp = torch.load("../PVD/PVD/t_embed.pth")
-        print("t_embed", torch.allclose(tmp, t_embed))
-
         in_points_list: List[PointTensor] = []
         for i, down_block in enumerate(self.down_blocks):
             in_points_list.append(points.clone())
@@ -214,13 +211,6 @@ class PVCNN(nn.Module):
                 )
 
             points = down_block(points)
-            tmp = torch.load(f"../PVD/PVD/sa_blocks{i}.pth")
-            print(f"sa_blocks{i}", torch.allclose(tmp, points.features), (tmp - points.features).abs().max())
-
-        # print("sa_blocks", points.features.mean(), points.features[0, :, 0])
-        tmp = torch.load("../PVD/PVD/sa_blocks.pth")
-        print("sa_blocks", torch.allclose(tmp, points.features))
-        # print("sa_blocks", torch.allclose(tmp[1, :, 1], points.features[1, :, 1]))
 
         # only use extra features in the last fp module
         in_points_list[0].features = in_points_list[0].features[:, 3:, :]
@@ -231,8 +221,6 @@ class PVCNN(nn.Module):
         for i, up_block in enumerate(self.up_blocks):
             points.features = torch.cat([points.features, points.t_embed], dim=1)
             points = up_block(points, ref_points=in_points_list[-1 - i])
-            tmp = torch.load(f"../PVD/PVD/fp_blocks{i}.pth")
-            print(f"fp_blocks{i}", torch.allclose(tmp, points.features), (tmp - points.features).abs().max())
 
         return self.out_proj(points.features)
 

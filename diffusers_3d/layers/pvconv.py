@@ -9,12 +9,6 @@ from .voxelization import Voxelizer
 from .se import SE3D
 from .shared_mlp import SharedMLP
 
-# from .modules.voxelization import Voxelization
-# from .modules.functional.devoxelization import trilinear_devoxelize
-
-tmp_index = 0
-tmp_index2 = 0
-
 
 class Attention(nn.Module):
     def __init__(self, num_channels: int, num_groups: int, dim: int = 3):
@@ -79,7 +73,6 @@ class PVConv(nn.Module):
         self.voxelizer = Voxelizer(
             voxel_resolution, normalize=normalize, eps=eps
         )
-        # self.voxelizer = Voxelization(voxel_resolution, normalize=normalize, eps=eps)
 
         voxel_layers = [
             nn.Conv3d(
@@ -114,62 +107,15 @@ class PVConv(nn.Module):
 
     def forward(self, points: PointTensor) -> PointTensor:
         voxels: PointTensor = self.voxelizer(points)
-        # voxel_features, voxel_coords = self.voxelizer(
-        #     points.features, points.coords.permute(0, 2, 1)
-        # )
-
-        global tmp_index
-        # torch.save((points.features, points.coords, voxel_features, voxel_coords), f"voxelizer{tmp_index}.pth")
-        (
-            _points_features, _points_coords, _voxel_features, _voxel_coords
-        ) = torch.load(f"../PVD/PVD/voxelizer{tmp_index}.pth")
-        tmp_index += 1
-
-        print("voxel_resolution", self.voxel_resolution)
-        print("_points_features", torch.allclose(_points_features, points.features), (_points_features - points.features).abs().max())
-        print("_points_coords", torch.allclose(_points_coords, points.coords), (_points_coords - points.coords).abs().max())
-        print("_voxel_features", torch.allclose(_voxel_features, voxels.features), (_voxel_features - voxels.features).abs().max())
-        print("_voxel_coords", torch.allclose(_voxel_coords, voxels.coords), (_voxel_coords - voxels.coords).abs().max())
-
-        # voxel_features = torch.ones_like(voxel_features)
-        # voxel_features = _voxel_features
-        # voxels = PointTensor(
-        #     coords=voxel_coords.permute(0, 2, 1),
-        #     features=voxel_features,
-        # )
 
         voxel_features = self.voxel_layers(voxels.features)
         point_features = self.point_layers(points.features)
 
-        # print("weight", self.voxel_layers[0].weight.abs().max())
-        # print("bias", self.voxel_layers[0].bias.abs().max())
-
-        tmp = voxel_features.clone()
         voxel_features, *_ = trilinear_devoxelize(
             voxels.coords, voxel_features, self.voxel_resolution
         )
-        # voxel_features = trilinear_devoxelize(
-        #     voxel_features, voxels.coords.permute(0, 2, 1),
-        #     self.voxel_resolution, self.training
-        # )
-        # print("voxel_features", voxel_features.shape)
-
-        global tmp_index2
-        # torch.save((points.features, points.coords, voxel_features, voxel_coords), f"voxelizer{tmp_index}.pth")
-        (
-            _tmp2, _tmp, _voxels_coords, _voxel_features
-        ) = torch.load(f"../PVD/PVD/devoxelize{tmp_index2}.pth")
-        tmp_index2 += 1
-
-        print("-" * 40)
-        print("_tmp2", torch.allclose(_tmp2, voxels.features), (_tmp2 - voxels.features).abs().max())
-        print("_tmp", torch.allclose(_tmp, tmp), (_tmp - tmp).abs().max())
-        print("_voxel_features", torch.allclose(_voxel_features, voxel_features), (_voxel_features - voxel_features).abs().max())
-        print("_voxels_coords", torch.allclose(_voxels_coords, voxels.coords), (_voxels_coords - voxels.coords).abs().max())
-        print("^" * 40)
 
         x = points.clone()
         x.coords = points.coords
-        x.features = voxel_features + point_features
-        # x.features = point_features
+        x.features = point_features + voxel_features
         return x

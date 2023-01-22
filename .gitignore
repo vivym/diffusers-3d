@@ -1,5 +1,6 @@
 /data/*
 /wandb
+/output
 /diffusers_3d/version.py
 
 *_pb2.py

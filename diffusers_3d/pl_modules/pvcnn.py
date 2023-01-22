@@ -5,17 +5,42 @@ import pytorch_lightning as pl
 import torch
 import torch.nn.functional as F
 
-from diffusers_3d.models.pvcnn import pvcnn_base
+from diffusers_3d.models.pvcnn import pvcnn_base, pvcnn_debug
 from diffusers_3d.structures.points import PointTensor
 from diffusers_3d.schedulers.ddpm import DDPMScheduler
 
+from .pvcnn_bak import GaussianDiffusion
 
-def normal_kl(mean1, logvar1, mean2, logvar2):
-    """
-    KL divergence between normal distributions parameterized by mean and log-variance.
-    """
-    return 0.5 * (-1.0 + logvar2 - logvar1 + torch.exp(logvar1 - logvar2)
-               + (mean1 - mean2)**2 * torch.exp(-logvar2))
+
+import numpy as np
+import matplotlib.pyplot as plt
+
+def visualize_pointcloud_batch(path, pointclouds, pred_labels, labels, categories, vis_label=False, target=None,  elev=30, azim=225):
+    batch_size = len(pointclouds)
+    fig = plt.figure(figsize=(20,20))
+
+    ncols = int(np.sqrt(batch_size))
+    nrows = max(1, (batch_size-1) // ncols+1)
+    for idx, pc in enumerate(pointclouds):
+        if vis_label:
+            label = categories[labels[idx].item()]
+            pred = categories[pred_labels[idx]]
+            colour = 'g' if label == pred else 'r'
+        elif target is None:
+
+            colour = 'g'
+        else:
+            colour = target[idx]
+        pc = pc.cpu().numpy()
+        ax = fig.add_subplot(nrows, ncols, idx + 1, projection='3d')
+        ax.scatter(pc[:, 0], pc[:, 2], pc[:, 1], c=colour, s=5)
+        ax.view_init(elev=elev, azim=azim)
+        ax.axis('off')
+        if vis_label:
+            ax.set_title('GT: {0}\nPred: {1}'.format(label, pred))
+
+    plt.savefig(path)
+    plt.close(fig)
 
 
 class PVCNN(pl.LightningModule):
@@ -33,6 +58,7 @@ class PVCNN(pl.LightningModule):
         max_epochs: int = 60,
         warmup_iters: int = 500,
         optimizer_type: str = "Adam",
+        debug_flag: str = "pl",
     ):
         super().__init__()
         self.save_hyperparameters()
@@ -49,6 +75,7 @@ class PVCNN(pl.LightningModule):
         self.max_epochs = max_epochs
         self.warmup_iters = warmup_iters
         self.optimizer_type = optimizer_type
+        self.debug_flag = debug_flag
 
         self.model = pvcnn_base(in_channels, time_embed_dim)
         self.noise_scheduler = DDPMScheduler(
@@ -58,33 +85,8 @@ class PVCNN(pl.LightningModule):
             clip_sample=False,
         )
 
-        import numpy as np
         betas = np.linspace(0.0001, 0.02, 1000)
-        alphas = 1. - betas
-        alphas_cumprod = torch.from_numpy(np.cumprod(alphas, axis=0)).float()
-        alphas_cumprod_prev = torch.from_numpy(np.append(1., alphas_cumprod[:-1])).float()
-
-        self.betas = torch.from_numpy(betas).float()
-        self.alphas_cumprod = alphas_cumprod.float()
-        self.alphas_cumprod_prev = alphas_cumprod_prev.float()
-
-        # calculations for diffusion q(x_t | x_{t-1}) and others
-        self.sqrt_alphas_cumprod = torch.sqrt(alphas_cumprod).float()
-        self.sqrt_one_minus_alphas_cumprod = torch.sqrt(1. - alphas_cumprod).float()
-        self.log_one_minus_alphas_cumprod = torch.log(1. - alphas_cumprod).float()
-        self.sqrt_recip_alphas_cumprod = torch.sqrt(1. / alphas_cumprod).float()
-        self.sqrt_recipm1_alphas_cumprod = torch.sqrt(1. / alphas_cumprod - 1).float()
-
-        betas = torch.from_numpy(betas).float()
-        alphas = torch.from_numpy(alphas).float()
-        # calculations for posterior q(x_{t-1} | x_t, x_0)
-        posterior_variance = betas * (1. - alphas_cumprod_prev) / (1. - alphas_cumprod)
-        # above: equal to 1. / (1. / (1. - alpha_cumprod_tm1) + alpha_t / beta_t)
-        self.posterior_variance = posterior_variance
-        # below: log calculation clipped because the posterior variance is 0 at the beginning of the diffusion chain
-        self.posterior_log_variance_clipped = torch.log(torch.max(posterior_variance, 1e-20 * torch.ones_like(posterior_variance)))
-        self.posterior_mean_coef1 = betas * torch.sqrt(alphas_cumprod_prev) / (1. - alphas_cumprod)
-        self.posterior_mean_coef2 = (1. - alphas_cumprod_prev) * torch.sqrt(alphas) / (1. - alphas_cumprod)
+        self.diffusion = GaussianDiffusion(betas, "mse", "eps", "fixedsmall")
 
     def forward(
         self,
@@ -157,87 +159,57 @@ class PVCNN(pl.LightningModule):
 
         return loss
 
+    def training_epoch_end(self, outputs):
+        if (self.current_epoch + 1) % 10 != 0:
+            return
+
+        self.eval()
+
+        print("vis")
+
+        def _denoise(data, t):
+            B, D,N= data.shape
+            assert data.dtype == torch.float
+            assert t.shape == torch.Size([B]) and t.dtype == torch.int64
+
+            points = PointTensor(
+                coords=data[:, :3, :].permute(0, 2, 1),
+                features=data,
+                is_channel_last=False,
+                timesteps=t,
+            )
+
+            out = self.model(points)
+
+            assert out.shape == torch.Size([B, D, N])
+            return out
+
+        with torch.no_grad():
+            x_gen_eval = self.diffusion.p_sample_loop(
+                _denoise,
+                shape=(25, 3, 2048),
+                device=self.device,
+                noise_fn=torch.randn,
+                clip_denoised=False,
+            )
+
+            visualize_pointcloud_batch(
+                f"output/test_{self.debug_flag}/epoch_{self.current_epoch:03d}.png",
+                x_gen_eval.transpose(1, 2), None, None, None
+            )
+
+        self.train()
+
     def on_after_backward(self):
+        for name, p in self.named_parameters():
+            if p.grad is None:
+                print(name)
+
         param_norm = torch.sqrt(sum(torch.sum(p ** 2) for p in self.parameters()))
         grad_norm = torch.sqrt(sum(torch.sum(p.grad ** 2) for p in self.parameters() if p.grad is not None))
 
         self.log("train/param_norm", param_norm, on_step=True, on_epoch=True, prog_bar=True)
         self.log("train/grad_norm", grad_norm, on_step=True, on_epoch=True, prog_bar=True)
-
-    @staticmethod
-    def _extract(a, t, x_shape):
-        """
-        Extract some coefficients at specified timesteps,
-        then reshape to [batch_size, 1, 1, 1, 1, ...] for broadcasting purposes.
-        """
-        bs, = t.shape
-        assert x_shape[0] == bs
-        out = torch.gather(a, 0, t)
-        assert out.shape == torch.Size([bs])
-        return torch.reshape(out, [bs] + ((len(x_shape) - 1) * [1]))
-
-    def q_mean_variance(self, x_start, t):
-        mean = self._extract(self.sqrt_alphas_cumprod.to(x_start.device), t, x_start.shape) * x_start
-        variance = self._extract(1. - self.alphas_cumprod.to(x_start.device), t, x_start.shape)
-        log_variance = self._extract(self.log_one_minus_alphas_cumprod.to(x_start.device), t, x_start.shape)
-        return mean, variance, log_variance
-
-    def q_posterior_mean_variance(self, x_start, x_t, t):
-        """
-        Compute the mean and variance of the diffusion posterior q(x_{t-1} | x_t, x_0)
-        """
-        assert x_start.shape == x_t.shape
-        posterior_mean = (
-                self._extract(self.posterior_mean_coef1.to(x_start.device), t, x_t.shape) * x_start +
-                self._extract(self.posterior_mean_coef2.to(x_start.device), t, x_t.shape) * x_t
-        )
-        posterior_variance = self._extract(self.posterior_variance.to(x_start.device), t, x_t.shape)
-        posterior_log_variance_clipped = self._extract(self.posterior_log_variance_clipped.to(x_start.device), t, x_t.shape)
-        assert (posterior_mean.shape[0] == posterior_variance.shape[0] == posterior_log_variance_clipped.shape[0] ==
-                x_start.shape[0])
-        return posterior_mean, posterior_variance, posterior_log_variance_clipped
-
-    def p_mean_variance(self, data, t, clip_denoised: bool, return_pred_xstart: bool):
-        model_output = self.forward(data, t)
-
-        self.model_var_type = "fixedsmall"
-        if self.model_var_type in ['fixedsmall', 'fixedlarge']:
-            # below: only log_variance is used in the KL computations
-            model_variance, model_log_variance = {
-                # for fixedlarge, we set the initial (log-)variance like so to get a better decoder log likelihood
-                'fixedlarge': (self.betas.to(data.device),
-                               torch.log(torch.cat([self.posterior_variance[1:2], self.betas[1:]])).to(data.device)),
-                'fixedsmall': (self.posterior_variance.to(data.device), self.posterior_log_variance_clipped.to(data.device)),
-            }[self.model_var_type]
-            model_variance = self._extract(model_variance, t, data.shape) * torch.ones_like(data)
-            model_log_variance = self._extract(model_log_variance, t, data.shape) * torch.ones_like(data)
-        else:
-            raise NotImplementedError(self.model_var_type)
-
-        self.model_mean_type = "eps"
-        if self.model_mean_type == 'eps':
-            x_recon = self._predict_xstart_from_eps(data, t=t, eps=model_output)
-
-            if clip_denoised:
-                x_recon = torch.clamp(x_recon, -.5, .5)
-
-            model_mean, _, _ = self.q_posterior_mean_variance(x_start=x_recon, x_t=data, t=t)
-        else:
-            raise NotImplementedError(self.loss_type)
-
-        assert model_mean.shape == x_recon.shape == data.shape
-        assert model_variance.shape == model_log_variance.shape == data.shape
-        if return_pred_xstart:
-            return model_mean, model_variance, model_log_variance, x_recon
-        else:
-            return model_mean, model_variance, model_log_variance
-
-    def _predict_xstart_from_eps(self, x_t, t, eps):
-        assert x_t.shape == eps.shape
-        return (
-                self._extract(self.sqrt_recip_alphas_cumprod.to(x_t.device), t, x_t.shape) * x_t -
-                self._extract(self.sqrt_recipm1_alphas_cumprod.to(x_t.device), t, x_t.shape) * eps
-        )
 
     def get_vb_terms_bpd(
         self,
@@ -309,25 +281,25 @@ class PVCNN(pl.LightningModule):
     #     pcs, labels = batch.pcs, batch.labels
 
     # learning rate warm-up
-    def optimizer_step(
-        self,
-        epoch,
-        batch_idx,
-        optimizer,
-        optimizer_idx,
-        optimizer_closure,
-        on_tpu=False,
-        using_native_amp=False,
-        using_lbfgs=False,
-    ):
-        # update params
-        optimizer.step(closure=optimizer_closure)
+    # def optimizer_step(
+    #     self,
+    #     epoch,
+    #     batch_idx,
+    #     optimizer,
+    #     optimizer_idx,
+    #     optimizer_closure,
+    #     on_tpu=False,
+    #     using_native_amp=False,
+    #     using_lbfgs=False,
+    # ):
+    #     # update params
+    #     optimizer.step(closure=optimizer_closure)
 
-        # skip the first 500 steps
-        if self.trainer.global_step < self.warmup_iters:
-            lr_scale = min(1.0, float(self.trainer.global_step + 1) / self.warmup_iters)
-            for pg in optimizer.param_groups:
-                pg["lr"] = lr_scale * self.hparams.learning_rate
+    #     # skip the first 500 steps
+    #     if self.trainer.global_step < self.warmup_iters:
+    #         lr_scale = min(1.0, float(self.trainer.global_step + 1) / self.warmup_iters)
+    #         for pg in optimizer.param_groups:
+    #             pg["lr"] = lr_scale * self.hparams.learning_rate
 
     def configure_optimizers(self):
         parameters = set_weight_decay(
