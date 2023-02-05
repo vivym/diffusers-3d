@@ -8,12 +8,12 @@ def main():
     device = torch.device("cuda")
 
     model = PVCNN.load_from_checkpoint(
-        "wandb/lightning_logs/version_20/checkpoints/epoch_000099.ckpt"
+        "wandb/lightning_logs/version_36/checkpoints/epoch_002929.ckpt"
     )
     model.eval()
     model.to(device)
 
-    sample_shape = (16, 2048, 3)
+    sample_shape = (25, 2048, 3)
 
     sample = torch.randn(sample_shape, device=device)
 

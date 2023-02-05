@@ -73,6 +73,11 @@
         "set": "cpp",
         "stack": "cpp",
         "filesystem": "cpp",
-        "__config": "cpp"
+        "__config": "cpp",
+        "codecvt": "cpp",
+        "complex": "cpp",
+        "iomanip": "cpp",
+        "variant": "cpp",
+        "__nullptr": "cpp"
     }
 }

@@ -202,25 +202,30 @@ class PVCNN(nn.Module):
         t_embed = t_embed[:, :, None].expand(*t_embed.shape, points.coords.shape[1])
         points.t_embed = t_embed
 
+        from torch.profiler import record_function
+
         in_points_list: List[PointTensor] = []
         for i, down_block in enumerate(self.down_blocks):
-            in_points_list.append(points.clone())
-            if i > 0:
-                points.features = torch.cat(
-                    [points.features, points.t_embed], dim=1
-                )
+            with record_function(f"down_block_{i}"):
+                in_points_list.append(points.clone())
+                if i > 0:
+                    points.features = torch.cat(
+                        [points.features, points.t_embed], dim=1
+                    )
 
-            points = down_block(points)
+                points = down_block(points)
 
         # only use extra features in the last fp module
         in_points_list[0].features = in_points_list[0].features[:, 3:, :]
 
-        # gloabl attention
-        points.features = self.global_attn(points.features)
+        with record_function(f"global_attn"):
+            # gloabl attention
+            points.features = self.global_attn(points.features)
 
         for i, up_block in enumerate(self.up_blocks):
-            points.features = torch.cat([points.features, points.t_embed], dim=1)
-            points = up_block(points, ref_points=in_points_list[-1 - i])
+            with record_function(f"up_block_{i}"):
+                points.features = torch.cat([points.features, points.t_embed], dim=1)
+                points = up_block(points, ref_points=in_points_list[-1 - i])
 
         return self.out_proj(points.features)
 
