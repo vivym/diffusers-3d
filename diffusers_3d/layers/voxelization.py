@@ -8,7 +8,7 @@ from diffusers_3d.structures.points import PointTensor
 @torch.no_grad()
 @torch.jit.script
 def get_voxel_coords(
-    coords: torch.Tensor, resolution: int, normalize: bool = True, eps: float = 0.
+    coords: torch.Tensor, resolution: int, normalize: bool = True, eps: float = 1e-8
 ):
     coords = coords - coords.mean(dim=1, keepdim=True)
     if normalize:
@@ -47,6 +47,11 @@ class Voxelizer(nn.Module):
         voxel_coords, voxel_coord_idxs = get_voxel_coords(
             points.coords, self.resolution, self.normalize, self.eps
         )
+        # tmp = voxel_coord_idxs.clone()
+        # for i, voxel_coord_idxs_i in enumerate(tmp):
+        #     voxel_coord_idxs_i += i * (self.resolution ** 3)
+        # print("voxel_coord_idxs", tmp.shape)
+        # print("voxel_coord_idxs", tmp.unique().shape)
 
         if points.is_channel_last:
             # B, R^3, C
@@ -65,6 +70,21 @@ class Voxelizer(nn.Module):
                 self.resolution,
                 points.features.shape[2],
             )
+
+            # voxel_mask = scatter(
+            #     torch.ones_like(points.features),
+            #     index=voxel_coord_idxs[:, :, None],
+            #     dim=1,
+            #     dim_size=self.resolution ** 3,
+            #     reduce="sum",
+            # )
+            # voxel_mask = voxel_mask.view(
+            #     points.features.shape[0],
+            #     self.resolution,
+            #     self.resolution,
+            #     self.resolution,
+            #     points.features.shape[2],
+            # )
         else:
             # B, C, R^3
             voxel_features = scatter(
@@ -82,7 +102,7 @@ class Voxelizer(nn.Module):
                 self.resolution,
             )
 
-        return PointTensor(coords=voxel_coords, features=voxel_features)
+        return PointTensor(coords=voxel_coords, features=voxel_features)#, voxel_mask, tmp
 
     def extra_repr(self):
         msg = f"resolution={self.resolution}"

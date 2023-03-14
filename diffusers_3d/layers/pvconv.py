@@ -1,7 +1,6 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from spconv.pytorch.utils import PointToVoxel
 
 from diffusers_3d.structures.points import PointTensor
 from diffusers_3d.ops.trilinear_devoxelize import trilinear_devoxelize
@@ -71,16 +70,8 @@ class PVConv(nn.Module):
         self.out_channels = out_channels
         self.voxel_resolution = voxel_resolution
 
-        # self.voxelizer = Voxelizer(
-        #     voxel_resolution, normalize=normalize, eps=eps
-        # )
-        self.voxelizer = PointToVoxel(
-            vsize_xyz=(1 / voxel_resolution, 1 / voxel_resolution, 1 / voxel_resolution),
-            coors_range_xyz=(0, 0, 0, 1, 1, 1),
-            num_point_features=3 + in_channels,
-            max_num_voxels=2048,
-            max_num_points_per_voxel=8,
-            device=torch.device("cuda"),
+        self.voxelizer = Voxelizer(
+            voxel_resolution, normalize=normalize, eps=eps
         )
 
         voxel_layers = [
@@ -115,33 +106,16 @@ class PVConv(nn.Module):
         self.point_layers = SharedMLP(num_channels=[in_channels, out_channels])
 
     def forward(self, points: PointTensor) -> PointTensor:
-        from torch.profiler import record_function
+        voxels: PointTensor = self.voxelizer(points)
 
-        with record_function("voxelizer"):
-            # voxels: PointTensor = self.voxelizer(points)
-            # print("points", points.features.shape)
-            # print("voxels", voxels.features.shape, (voxels.features != 0).any(1).sum(), (voxels.features != 0).any(1).sum() / voxels.features.numel())
-            for coords, features in zip(points.coords, points.features):
-                (
-                    voxel_features, voxel_coords, num_points_per_voxel, pc_voxel_id
-                ) = self.voxelizer.generate_voxel_with_id(
-                    torch.cat([coords, features.permute(1, 0)], dim=-1)
-                )
-                print("voxel_features", voxel_features.shape)
-                print("voxel_coords", voxel_coords.shape)
-                print("num_points_per_voxel", num_points_per_voxel.shape, num_points_per_voxel.float().mean())
-                print("pc_voxel_id", pc_voxel_id.shape)
-        exit(0)
+        voxel_features = self.voxel_layers(voxels.features)
 
-        with record_function("voxel_layers"):
-            voxel_features = self.voxel_layers(voxels.features)
+        point_features = self.point_layers(points.features)
 
-        with record_function("point_layers"):
-            point_features = self.point_layers(points.features)
-
-        voxel_features, *_ = trilinear_devoxelize(
-            voxels.coords, voxel_features, self.voxel_resolution
-        )
+        with torch.no_grad():
+            voxel_features, *_ = trilinear_devoxelize(
+                voxels.coords, voxel_features, self.voxel_resolution
+            )
 
         x = points.clone()
         x.coords = points.coords

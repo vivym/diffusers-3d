@@ -1,13 +1,17 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from sparse_ops.voxelize import voxelize
+from sparse_ops.devoxelize import trilinear_devoxelize
+import spconv.pytorch as spconv
 
 from diffusers_3d.structures.points import PointTensor
-from diffusers_3d.ops.trilinear_devoxelize import trilinear_devoxelize
 
-from .voxelization import Voxelizer
+from .voxelization import get_voxel_coords
 from .se import SE3D
 from .shared_mlp import SharedMLP
+
+g_voxels = None
 
 
 class Attention(nn.Module):
@@ -70,12 +74,8 @@ class PVConv(nn.Module):
         self.out_channels = out_channels
         self.voxel_resolution = voxel_resolution
 
-        self.voxelizer = Voxelizer(
-            voxel_resolution, normalize=normalize, eps=eps
-        )
-
         voxel_layers = [
-            nn.Conv3d(
+            spconv.SparseConv3d(
                 in_channels, out_channels,
                 kernel_size=kernel_size,
                 stride=1,
@@ -88,8 +88,11 @@ class PVConv(nn.Module):
         if dropout_prob > 0:
             voxel_layers.append(nn.Dropout(dropout_prob))
 
+        use_attention = False
+        use_se = False
+
         voxel_layers += [
-            nn.Conv3d(
+            spconv.SparseConv3d(
                 out_channels, out_channels,
                 kernel_size=kernel_size,
                 stride=1,
@@ -102,24 +105,52 @@ class PVConv(nn.Module):
         if use_se:
             voxel_layers.append(SE3D(out_channels))
 
-        self.voxel_layers = nn.Sequential(*voxel_layers)
+        self.voxel_layers = spconv.SparseSequential(*voxel_layers)
         self.point_layers = SharedMLP(num_channels=[in_channels, out_channels])
 
     def forward(self, points: PointTensor) -> PointTensor:
-        from torch.profiler import record_function
+        coords, _ = get_voxel_coords(points.coords, self.voxel_resolution)
 
-        with record_function("voxelizer"):
-            voxels: PointTensor = self.voxelizer(points)
+        voxel_size = torch.as_tensor([1., 1., 1.], dtype=coords.dtype)
+        points_range_min = torch.as_tensor([0., 0., 0.], dtype=coords.dtype)
+        points_range_max = torch.as_tensor(
+            [self.voxel_resolution, self.voxel_resolution, self.voxel_resolution],
+            dtype=coords.dtype,
+        )
+        voxels = voxelize(
+            point_coords=coords.contiguous(),
+            point_features=points.features.permute(0, 2, 1).contiguous(),
+            voxel_size=voxel_size.contiguous(),
+            points_range_min=points_range_min.contiguous(),
+            points_range_max=points_range_max.contiguous(),
+        )
 
-        with record_function("voxel_layers"):
-            voxel_features = self.voxel_layers(voxels.features)
+        sp_tensor = spconv.SparseConvTensor(
+            features=voxels.features,
+            indices=torch.cat([
+                voxels.batch_indices[:, None],
+                voxels.coords,
+            ], dim=-1).to(torch.int32),
+            spatial_shape=(
+                self.voxel_resolution, self.voxel_resolution, self.voxel_resolution
+            ),
+            batch_size=voxels.batch_indices.max().item() + 1,
+        )
 
-        with record_function("point_layers"):
-            point_features = self.point_layers(points.features)
+        sp_tensor = self.voxel_layers(sp_tensor)
 
         voxel_features, *_ = trilinear_devoxelize(
-            voxels.coords, voxel_features, self.voxel_resolution
+            coords.contiguous(),
+            voxel_size=voxel_size.contiguous(),
+            points_range_min=points_range_min.contiguous(),
+            points_range_max=points_range_max.contiguous(),
+            voxel_coords=sp_tensor.indices[:, 1:].long().contiguous(),
+            voxel_features=sp_tensor.features.contiguous(),
+            voxel_batch_indices=sp_tensor.indices[:, 0].long().contiguous(),
         )
+        voxel_features = voxel_features.permute(0, 2, 1)
+
+        point_features = self.point_layers(points.features)
 
         x = points.clone()
         x.coords = points.coords
